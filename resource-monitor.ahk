@@ -18,16 +18,17 @@ captionCol      := "0xFF181F2C"
 backCol         := "0xFF1C2433"
 cpuCol          := "0xfff35c65"
 ramCol          := "0xFF34A9C3"
+gpuCol          := "0xFF32CD32"
 white           := "0xFFFFFFFF"
 successCol      := "0xFF23CD85"
-w:=140,h:=240,aot:=false
-recentValues := Map("cpu",[],"ram",[])
+w:=140,h:=320,aot:=false
+recentValues := Map("cpu",[],"ram",[], "gpu",[])
 main := Gui("+OwnDialogs +E0x80000 -Caption", "Ninju's Stat Monitor v2")
 main.show()
 main.add("text","x" w-10 " y2 w6 h6").OnEvent("Click", (*) => ExitApp())
 main.add("Text","x" w-20 " y2 w6 h6").OnEvent("Click", tAot)
-main.Add("text", "x10 y170 w120 h20").OnEvent("Click", (*)=>(DllCall("SetCursor", "ptr",hCursorLoading),mem:=GlobalMemoryStatusEx(1), FreeMemory(), updateGui(), SetTimer((*)=>MsgBox('Freed ' GlobalMemoryStatusEx(1) - mem "mb"),-5000), DllCall("SetCursor", "ptr", hCursorArrow)))
-main.Add("text", "x10 y195 w120 h20").OnEvent("Click", (*)=>(DllCall("SetCursor", "ptr", hCursorLoading), am:=RemoveTempFiles(),updateGui(), DllCall("SetCursor", "ptr", hCursorArrow)))
+main.Add("text", "x10 y250 w120 h20").OnEvent("Click", (*)=>(DllCall("SetCursor", "ptr",hCursorLoading),mem:=GlobalMemoryStatusEx(1), FreeMemory(), updateGui(), SetTimer((*)=>MsgBox('Freed ' GlobalMemoryStatusEx(1) - mem "mb"),-5000), DllCall("SetCursor", "ptr", hCursorArrow)))
+main.Add("text", "x10 y275 w120 h20").OnEvent("Click", (*)=>(DllCall("SetCursor", "ptr", hCursorLoading), am:=RemoveTempFiles(),updateGui(), DllCall("SetCursor", "ptr", hCursorArrow)))
 main.add("text","x0 y0 w" w " h" h).OnEvent("Click", (*) => PostMessage(0xA1,2))
 ; ty to xspx
 hbm := CreateDIBSection(w, h)
@@ -39,7 +40,7 @@ Gdip_SetInterpolationMode(G, 2)
 UpdateLayeredWindow(main.Hwnd, hdc)
 CPUSystemTimes() ;init
 loop
-    sleep(1000),updateGui(CPUSystemTimes(),GlobalMemoryStatusEx())
+    sleep(1000),updateGui(CPUSystemTimes(),GlobalMemoryStatusEx(), GetGPUUsage())
 CPUSystemTimes(){
     static pIdleTime:=0, pKernelTime:=0, pUserTime:=0
     local s, pIdleTime2,pKernelTime2,pUserTime2
@@ -67,6 +68,11 @@ FreeMemory() {
 		}
 	}
 	return DllCall("psapi\EmptyWorkingSet", "ptr", -1)
+}
+GetGPUUsage() {
+	for objItem in ComObjGet("winmgmts:").ExecQuery("SELECT * FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine")
+		if (objItem.UtilizationPercentage)
+			return objItem.UtilizationPercentage
 }
 
 /************************************************************************
@@ -192,7 +198,7 @@ GetLastBootTime(){
 	s := Format("{:02}",mod(n,60))
 	return h ":" m ":" s
 }
-updateGui(cpu?,ram?){
+updateGui(cpu?,ram?, gpu?){
     global
     if (IsSet(cpu) && IsSet(ram)) {
     For k,v in recentValues
@@ -200,6 +206,7 @@ updateGui(cpu?,ram?){
             v.RemoveAt(1)
     recentValues["cpu"].push(cpu)
     recentValues["ram"].push(ram)
+	recentValues["gpu"].push(gpu)
     }
     Gdip_FillRectangle(G, pBrush := Gdip_BrushCreateSolid(captionCol),-1,-1,w+2,h+2), Gdip_DeleteBrush(pBrush)
     Gdip_FillRectangle(G,pBrush:=Gdip_BrushCreateSolid(backCol), -1,10,w+2,h-9),Gdip_DeleteBrush(pBrush)
@@ -209,16 +216,20 @@ updateGui(cpu?,ram?){
     pBrush := Gdip_BrushCreateSolid(captionCol)
     createGraphBox(10, 15)
     createGraphBox(10,70)
-    createTextBox(10,120,'CPU: ' recentValues["cpu"][-1] "%",cpuCol)
-    createTextBox(10,145,'RAM: ' recentValues["ram"][-1] "%",ramCol)
-	createTextBox(10,170,'Free Memory', '0xFFFFFFFF')
-	createTextBox(10, 195, 'Remove Temp', '0xFFFFFFFF')
+	createGraphBox(10, 125)
+
+    createTextBox(10,175,'CPU: ' recentValues["cpu"][-1] "%",cpuCol)
+    createTextBox(10,200,'RAM: ' recentValues["ram"][-1] "%",ramCol)
+	createTextBox(10, 225, 'GPU: ' recentValues["gpu"][-1] "%", gpuCol)
+	createTextBox(10,250,'Free Memory', '0xFFFFFFFF')
+	createTextBox(10, 275, 'Remove Temp', '0xFFFFFFFF')
     Gdip_DeletePen(pPen)
     pPenCpu := Gdip_CreatePen(cpuCol,1)
     pPenRam := Gdip_CreatePen(ramCol,1)
+	pPenGpu := Gdip_CreatePen(gpuCol, 1)
     For k,v in recentValues
         for i,j in v
-            Gdip_DrawLine(G,pPen%k%,129-v.length +i, 5+ (k = "cpu" ? 1 : 2)*55, 129-v.length + i, 5+(k = "cpu" ? 1:2)*55 - 45/100*j)
+            Gdip_DrawLine(G,pPen%k%,129-v.length +i, 5+ (k = "cpu" ? 1 : k = "ram" ? 2 : 3)*55, 129-v.length + i, 5+(k = "cpu" ? 1: k = "ram" ? 2 : 3)*55 - 45/100*j)
     Gdip_DeletePen(pPenCpu),Gdip_DeletePen(pPenRam)
 	Gdip_TextToGraphics(G,"Last Boot: " GetLastBootTime(),"x0 y" h-20 " Center vCenter c" (pBrush:=Gdip_BrushCreateSolid(white)),,w, 20)
     UpdateLayeredWindow(main.Hwnd,hdc,,,w,h)
