@@ -9,19 +9,25 @@
 #SingleInstance Force
 if (!pToken:=Gdip_Startup())
     msgbox "error"
+OnMessage(0x0020, (*)=>1)
+hCursorArrow := DllCall("LoadCursor", "Ptr", 0, "Ptr", 32512, "Ptr")
+hCursorLoading := DllCall("LoadCursor", "Ptr", 0, "Ptr", 32514, "Ptr")
+DllCall("SetCursor", "Ptr", hCursorArrow)
 captionCol      := "0xFF181F2C"
 backCol         := "0xFF1C2433"
 cpuCol          := "0xfff35c65"
 ramCol          := "0xFF34A9C3"
 white           := "0xFFFFFFFF"
 successCol      := "0xFF23CD85"
-w:=140,h:=190,aot:=false
-TraySetIcon("wt.exe")
+w:=140,h:=240,aot:=false
+recentValues := Map("cpu",[],"ram",[])
 main := Gui("+OwnDialogs +E0x80000 -Caption", "Ninju's Stat Monitor v2")
-main.show("w" w " h" h)
+main.show()
 main.add("text","x" w-10 " y2 w6 h6").OnEvent("Click", (*) => ExitApp())
 main.add("Text","x" w-20 " y2 w6 h6").OnEvent("Click", tAot)
-main.add("text","x0 y0 w" w " h" h).OnEvent("Click", (*) => SendMessage(0xA1,2))
+main.Add("text", "x10 y170 w120 h20").OnEvent("Click", (*)=>(DllCall("SetCursor", "ptr",hCursorLoading),mem:=GlobalMemoryStatusEx(1), FreeMemory(), updateGui(), SetTimer((*)=>MsgBox('Freed ' GlobalMemoryStatusEx(1) - mem "mb"),-5000), DllCall("SetCursor", "ptr", hCursorArrow)))
+main.Add("text", "x10 y195 w120 h20").OnEvent("Click", (*)=>(DllCall("SetCursor", "ptr", hCursorLoading), RemoveTempFiles(),updateGui(), MsgBox("Temp files removed"), DllCall("SetCursor", "ptr", hCursorArrow)))
+main.add("text","x0 y0 w" w " h" h).OnEvent("Click", (*) => PostMessage(0xA1,2))
 ; ty to xspx
 hbm := CreateDIBSection(w, h)
 hdc := CreateCompatibleDC()
@@ -41,12 +47,32 @@ CPUSystemTimes(){
     DllCall("GetSystemTimes", "int64*", &pIdleTime2:=0 , "int64*", &pKernelTime2:=0, "int64*", &pUserTime2:=0)
     return ((s:=pKernelTime-pKernelTime2 + pUserTime - pUserTime2) - pIdleTime+pIdleTime2 ) * 100//s * !!(pIdleTime:=pIdleTime2,pKernelTime:=pKernelTime2,pUserTime:=pUserTime2)
 }
-GlobalMemoryStatusEx() {
-    static _MEMORYSTATUSEX := Buffer(64, 0)
-    NumPut("uint",64, _MEMORYSTATUSEX)
-    if (DllCall("Kernel32.dll\GlobalMemoryStatusEx", "Ptr", _MEMORYSTATUSEX))
-        return Round(Round(Round(NumGet(_MEMORYSTATUSEX, 8, "UInt64") / 1024**2, 2)-Round(NumGet(_MEMORYSTATUSEX, 16, "UInt64") / 1024**2, 2),2) / Round(NumGet(_MEMORYSTATUSEX, 8, "UInt64") / 1024**2, 2)  * 100)
+GlobalMemoryStatusEx(returnMB?) {
+    static _MEMORYSTATUSEX := Buffer(64, 0), _:=(NumPut("uint", 64, _MEMORYSTATUSEX))
+    if (DllCall("Kernel32.dll\GlobalMemoryStatusEx", "Ptr", _MEMORYSTATUSEX)) {
+		if returnMB ?? 0
+			return NumGet(_MEMORYSTATUSEX, 16, "UInt64") // 1024**2
+        return NumGet(_MEMORYSTATUSEX, 4, "uint")
+	}
+	return 0
 }
+FreeMemory() {
+	for obj in ComObjGet("winmgmts:").ExecQuery("SELECT * FROM Win32_Process") {
+		try {
+			hProcess := DllCall("OpenProcess", "uint", 0x1F0FFF, "int", 0, "uint", obj.ProcessId, "ptr")
+			DllCall("SetProcessWorkingSetSize", "ptr", hProcess, "int", -1, "int", -1, "int")
+			DllCall("psapi\EmptyWorkingSet", "ptr", hProcess)
+			DllCall("CloseHandle", "ptr", hProcess)
+		}
+	}
+	return DllCall("psapi\EmptyWorkingSet", "ptr", -1)
+}
+
+RemoveTempFiles() {
+	loop files A_Temp "\*.*"
+		try FileDelete(A_LoopFileFullPath)
+}
+
 tAOT(*){
     global
     aot := !aot
@@ -62,7 +88,6 @@ GetLastBootTime(){
 }
 updateGui(cpu?,ram?){
     global
-    static recentValues := Map("cpu",[],"ram",[])
     if (IsSet(cpu) && IsSet(ram)) {
     For k,v in recentValues
         if v.Length = 120
@@ -78,8 +103,10 @@ updateGui(cpu?,ram?){
     pBrush := Gdip_BrushCreateSolid(captionCol)
     createGraphBox(10, 15)
     createGraphBox(10,70)
-    createTextBox(10,120,recentValues["cpu"][recentValues["cpu"].Length],cpuCol)
-    createTextBox(10,145,recentValues["ram"][recentValues["cpu"].Length],ramCol)
+    createTextBox(10,120,'CPU: ' recentValues["cpu"][-1] "%",cpuCol)
+    createTextBox(10,145,'RAM: ' recentValues["ram"][-1] "%",ramCol)
+	createTextBox(10,170,'Free Memory', '0xFFFFFFFF')
+	createTextBox(10, 195, 'Remove Temp', '0xFFFFFFFF')
     Gdip_DeletePen(pPen)
     pPenCpu := Gdip_CreatePen(cpuCol,1)
     pPenRam := Gdip_CreatePen(ramCol,1)
@@ -87,7 +114,7 @@ updateGui(cpu?,ram?){
         for i,j in v
             Gdip_DrawLine(G,pPen%k%,129-v.length +i, 5+ (k = "cpu" ? 1 : 2)*55, 129-v.length + i, 5+(k = "cpu" ? 1:2)*55 - 45/100*j)
     Gdip_DeletePen(pPenCpu),Gdip_DeletePen(pPenRam)
-	Gdip_TextToGraphics(G,"Last Boot: " GetLastBootTime(),"x0 y170 Center vCenter c" (pBrush:=Gdip_BrushCreateSolid(white)),,w, 20)
+	Gdip_TextToGraphics(G,"Last Boot: " GetLastBootTime(),"x0 y" h-20 " Center vCenter c" (pBrush:=Gdip_BrushCreateSolid(white)),,w, 20)
     UpdateLayeredWindow(main.Hwnd,hdc,,,w,h)
 }
 createGraphBox(x,y){
@@ -100,7 +127,7 @@ createGraphBox(x,y){
 }
 createTextBox(x,y,percent, col){
     Gdip_FillRectangle(G,pBrush := Gdip_BrushCreateSolid(captionCol),x,y,120,20), Gdip_DeleteBrush(pBrush)
-    Gdip_TextToGraphics(G,(col = cpuCol ? "CPU" : "RAM") ": " percent "%","x" x " y" y+2 " Center vCenter c" (pBrush:=Gdip_BrushCreateSolid(col)),,120,20), Gdip_DeleteBrush(pBrush)
+    Gdip_TextToGraphics(G, percent,"x" x " y" y+2 " Center vCenter c" (pBrush:=Gdip_BrushCreateSolid(col)),,120,20), Gdip_DeleteBrush(pBrush)
 }
 
 
@@ -109,7 +136,7 @@ createTextBox(x,y,percent, col){
 ; GDI LIBRARY
 /**
  * @author builasz
- * @edited by xSPx & ninju
+ * @edited by xSPx
  * @url https://github.com/buliasz/AHKv2-Gdip
  */
 Gdip_Startup()
